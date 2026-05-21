@@ -47,8 +47,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--force-ignore-eos", action="store_true")
     parser.add_argument("--max-completion-tokens", type=int, default=2048)
+    parser.add_argument(
+        "--allowed-token-ids",
+        default="",
+        help="Comma-separated token ids to constrain sampling, e.g. '0'.",
+    )
     parser.add_argument("--timeout-s", type=float, default=1800.0)
     return parser.parse_args()
+
+
+def parse_allowed_token_ids(value: str) -> list[int] | None:
+    token_ids = [int(item) for item in value.split(",") if item.strip()]
+    return token_ids or None
 
 
 def body_content_length(body: dict[str, Any]) -> int:
@@ -114,6 +124,7 @@ def make_body(
     salt: int,
     force_ignore_eos: bool,
     max_completion_tokens: int,
+    allowed_token_ids: list[int] | None,
 ) -> dict[str, Any]:
     replay_body = dict(body)
     replay_body["model"] = MODEL
@@ -126,6 +137,8 @@ def make_body(
         replay_body["ignore_eos"] = True
     if max_completion_tokens > 0:
         replay_body["max_completion_tokens"] = max_completion_tokens
+    if allowed_token_ids is not None:
+        replay_body["allowed_token_ids"] = allowed_token_ids
     return replay_body
 
 
@@ -251,13 +264,15 @@ async def main_async() -> int:
     if args.limit > 0:
         records = records[: args.limit]
 
+    allowed_token_ids = parse_allowed_token_ids(args.allowed_token_ids)
     expanded = records * args.repeat
     print(
         "CHAT_REPLAY_START "
         f"input={args.input} base_records={len(records)} total_requests={len(expanded)} "
         f"repeat={args.repeat} concurrency={args.concurrency} "
         f"force_ignore_eos={args.force_ignore_eos} "
-        f"max_completion_tokens={args.max_completion_tokens}",
+        f"max_completion_tokens={args.max_completion_tokens} "
+        f"allowed_token_ids={allowed_token_ids}",
         flush=True,
     )
     for index, (request_id, body) in enumerate(records[:8]):
@@ -285,6 +300,7 @@ async def main_async() -> int:
                 salt=index,
                 force_ignore_eos=args.force_ignore_eos,
                 max_completion_tokens=args.max_completion_tokens,
+                allowed_token_ids=allowed_token_ids,
             )
             body_len = body_content_length(replay_body)
             tasks.append(

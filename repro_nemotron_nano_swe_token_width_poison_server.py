@@ -54,10 +54,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--probe-max-tokens", type=int, default=192)
     parser.add_argument("--fill-prompt-len", type=int, default=1024)
     parser.add_argument("--probe-prompt-len", type=int, default=0)
+    parser.add_argument(
+        "--allowed-token-ids",
+        default="",
+        help="Comma-separated token ids to constrain sampling, e.g. '0'.",
+    )
     parser.add_argument("--request-timeout", type=float, default=1800.0)
     parser.add_argument("--between-waves-sleep", type=float, default=2.0)
     parser.add_argument("--between-pairs-sleep", type=float, default=5.0)
     return parser.parse_args()
+
+
+def parse_allowed_token_ids(value: str) -> list[int] | None:
+    token_ids = [int(item) for item in value.split(",") if item.strip()]
+    return token_ids or None
 
 
 def parse_pairs(value: str) -> list[WidthPair]:
@@ -137,6 +147,7 @@ async def post_completion(
     tag: str,
     index: int,
     max_tokens: int,
+    allowed_token_ids: list[int] | None,
 ) -> str:
     body = {
         "model": MODEL,
@@ -149,6 +160,8 @@ async def post_completion(
         "logprobs": 1,
         "return_token_ids": True,
     }
+    if allowed_token_ids is not None:
+        body["allowed_token_ids"] = allowed_token_ids
     started = time.monotonic()
     try:
         response = await client.post(
@@ -222,6 +235,7 @@ async def run_wave(
     max_tokens: int,
     base_prompt: list[int],
     salt_offset: int,
+    allowed_token_ids: list[int] | None,
 ) -> dict[str, int]:
     print(
         "WAVE_START "
@@ -237,6 +251,7 @@ async def run_wave(
             tag=tag,
             index=index,
             max_tokens=max_tokens,
+            allowed_token_ids=allowed_token_ids,
         )
         for index in range(width)
     ]
@@ -257,13 +272,15 @@ async def main_async() -> int:
     args = parse_args()
     pairs = parse_pairs(args.pairs)
     base_prompt = load_failure_prompt_ids()
+    allowed_token_ids = parse_allowed_token_ids(args.allowed_token_ids)
     probe_prompt_len = args.probe_prompt_len or len(base_prompt)
     print(
         "TOKEN_WIDTH_POISON_SETTING "
         f"base_url={args.base_url} diagnostic={DIAGNOSTIC_PATH} "
         f"base_prompt_len={len(base_prompt)} pairs={pairs} repeats={args.repeats} "
         f"fill_prompt_len={args.fill_prompt_len} probe_prompt_len={probe_prompt_len} "
-        f"fill_max_tokens={args.fill_max_tokens} probe_max_tokens={args.probe_max_tokens}",
+        f"fill_max_tokens={args.fill_max_tokens} probe_max_tokens={args.probe_max_tokens} "
+        f"allowed_token_ids={allowed_token_ids}",
         flush=True,
     )
 
@@ -288,6 +305,7 @@ async def main_async() -> int:
                     max_tokens=args.fill_max_tokens,
                     base_prompt=base_prompt,
                     salt_offset=repeat * 100000 + pair_index * 1000,
+                    allowed_token_ids=allowed_token_ids,
                 )
                 await asyncio.sleep(args.between_waves_sleep)
                 probe_counts = await run_wave(
@@ -298,6 +316,7 @@ async def main_async() -> int:
                     max_tokens=args.probe_max_tokens,
                     base_prompt=base_prompt,
                     salt_offset=repeat * 100000 + pair_index * 1000 + 500,
+                    allowed_token_ids=allowed_token_ids,
                 )
                 for counts in (fill_counts, probe_counts):
                     for status, count in counts.items():

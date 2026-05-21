@@ -69,6 +69,7 @@ CHAT_LIMIT="${CHAT_LIMIT:-0}"
 CHAT_SORT="${CHAT_SORT:-none}"
 CHAT_FORCE_IGNORE_EOS="${CHAT_FORCE_IGNORE_EOS:-1}"
 CHAT_MAX_COMPLETION_TOKENS="${CHAT_MAX_COMPLETION_TOKENS:-2048}"
+CHAT_ALLOWED_TOKEN_IDS="${CHAT_ALLOWED_TOKEN_IDS:-}"
 OUT_DIR="/beegfs/outputs/vllm-nemotron-nano-chat-ring-${SLURM_JOB_ID}"
 mkdir -p "$OUT_DIR"
 
@@ -97,6 +98,7 @@ trap cleanup EXIT
     echo "chat_sort=$CHAT_SORT"
     echo "chat_force_ignore_eos=$CHAT_FORCE_IGNORE_EOS"
     echo "chat_max_completion_tokens=$CHAT_MAX_COMPLETION_TOKENS"
+    echo "chat_allowed_token_ids=$CHAT_ALLOWED_TOKEN_IDS"
     echo "cudagraph_mode=$CUDAGRAPH_MODE"
     echo "hf_home=$HF_HOME"
     echo "hf_hub_cache=$HF_HUB_CACHE"
@@ -178,5 +180,6 @@ fi
     --concurrency "$CHAT_CONCURRENCY" \
     --sort-by-content-length "$CHAT_SORT" \
     --max-completion-tokens "$CHAT_MAX_COMPLETION_TOKENS" \
+    --allowed-token-ids "$CHAT_ALLOWED_TOKEN_IDS" \
     "${replay_args[@]}" \
     2>&1 | tee "$CLIENT_LOG"

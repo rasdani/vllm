@@ -68,6 +68,7 @@ FILL_MAX_TOKENS="${FILL_MAX_TOKENS:-96}"
 PROBE_MAX_TOKENS="${PROBE_MAX_TOKENS:-192}"
 FILL_PROMPT_LEN="${FILL_PROMPT_LEN:-1024}"
 PROBE_PROMPT_LEN="${PROBE_PROMPT_LEN:-0}"
+ALLOWED_TOKEN_IDS="${ALLOWED_TOKEN_IDS:-}"
 OUT_DIR="/beegfs/outputs/vllm-nemotron-nano-width-poison-${SLURM_JOB_ID}"
 mkdir -p "$OUT_DIR"
 
@@ -95,6 +96,7 @@ trap cleanup EXIT
     echo "probe_prompt_len=$PROBE_PROMPT_LEN"
     echo "fill_max_tokens=$FILL_MAX_TOKENS"
     echo "probe_max_tokens=$PROBE_MAX_TOKENS"
+    echo "allowed_token_ids=$ALLOWED_TOKEN_IDS"
     echo "cudagraph_mode=$CUDAGRAPH_MODE"
     echo "hf_home=$HF_HOME"
     echo "hf_hub_cache=$HF_HUB_CACHE"
@@ -167,4 +169,5 @@ fi
     --probe-max-tokens "$PROBE_MAX_TOKENS" \
     --fill-prompt-len "$FILL_PROMPT_LEN" \
     --probe-prompt-len "$PROBE_PROMPT_LEN" \
+    --allowed-token-ids "$ALLOWED_TOKEN_IDS" \
     2>&1 | tee "$CLIENT_LOG"
