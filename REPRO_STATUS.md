@@ -61,6 +61,11 @@ evidence, not the primary standalone fixture.
 - `repro_nemotron_nano_swe_token_width_poison_server.py`
     - Synthetic width probe using real failing prompt token IDs.
     - Use only after real chat replay attempts, and label results as synthetic.
+- `repro_nemotron_nano_swe_rollout_prefix_server.py`
+    - Rebuilds chat requests from saved rollout transcripts.
+    - Uses no prime-rl runtime, verifiers, tools, or sandboxes; it only reads
+      persisted rollout JSONL and sends reconstructed `/v1/chat/completions`
+      requests to vLLM.
 
 ## Latest command
 
@@ -131,3 +136,17 @@ sbatch repro_nemotron_nano_swe_token_width_poison_server.sbatch
   `any_nonzero=True`. This confirms the stale padded-input mechanism is live in
   a vLLM-only OpenAI-server run, but this reduced workload still did not surface
   the final JSON NaN.
+- `19367`: faithful multi-diagnostic chat replay over all four captured
+  `chat_nan_diagnostics/*chat_nonfinite_response*.json` files. This replay sent
+  260 real captured chat bodies, concurrency 256, preserved `ignore_eos=false`
+  from the bodies, used `max_completion_tokens=4096`, `FULL_AND_PIECEWISE`, and
+  `VLLM_USE_DEEP_GEMM=0`. Result was `status_counts={'ok': 260}` and
+  `RESULT no_nonfinite_observed`. The responses included 18 generations with at
+  least 2048 logprob items and 5 length-capped 4096-token generations, but none
+  sampled token id `0`.
+- `19368`: same four-diagnostic chat replay, but with `allowed_token_ids=[0]`,
+  `ignore_eos=true`, and `max_completion_tokens=64` to force the `<unk>` token
+  path seen in every captured non-finite response. Result was
+  `status_counts={'ok': 260}` and `RESULT no_nonfinite_observed`. This makes
+  token id `0` look like a symptom or necessary downstream ingredient, not by
+  itself sufficient to create the NaN from a fresh vLLM server.
