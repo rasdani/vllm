@@ -85,9 +85,25 @@ def normalize_message(message: dict[str, Any]) -> dict[str, Any]:
         parsed_tool_calls = []
         for tool_call in tool_calls:
             if isinstance(tool_call, str):
-                parsed_tool_calls.append(json.loads(tool_call))
-            else:
+                tool_call = json.loads(tool_call)
+            if (
+                isinstance(tool_call, dict)
+                and "function" not in tool_call
+                and "name" in tool_call
+                and "arguments" in tool_call
+            ):
+                tool_call = {
+                    "id": tool_call.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": tool_call["name"],
+                        "arguments": tool_call["arguments"],
+                    },
+                }
+            if isinstance(tool_call, dict):
                 parsed_tool_calls.append(tool_call)
+            else:
+                raise TypeError(f"unsupported tool call shape: {tool_call!r}")
         normalized["tool_calls"] = parsed_tool_calls
     return normalized
 
