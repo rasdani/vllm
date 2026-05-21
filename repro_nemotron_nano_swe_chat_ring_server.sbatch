@@ -23,6 +23,24 @@ export TRITON_CACHE_DIR=/tmp/triton-cache-$USER-$SLURM_JOB_ID
 export VLLM_CACHE_ROOT=/tmp/.vllm_cache_$USER
 export FLASHINFER_WORKSPACE_BASE=/tmp/flashinfer-workspace-$USER-$SLURM_JOB_ID
 
+EXTENSION_SOURCE="/home/daniel/git/vllm/vllm"
+for rel in \
+    "_C.abi3.so" \
+    "_C_stable_libtorch.abi3.so" \
+    "_flashmla_C.abi3.so" \
+    "_flashmla_extension_C.abi3.so" \
+    "_moe_C.abi3.so" \
+    "cumem_allocator.abi3.so" \
+    "spinloop.abi3.so" \
+    "third_party/deep_gemm/_C.cpython-312-x86_64-linux-gnu.so" \
+    "vllm_flash_attn/_vllm_fa2_C.abi3.so" \
+    "vllm_flash_attn/_vllm_fa3_C.abi3.so"; do
+    mkdir -p "vllm/$(dirname "$rel")"
+    if [ ! -e "vllm/$rel" ]; then
+        ln -s "$EXTENSION_SOURCE/$rel" "vllm/$rel"
+    fi
+done
+
 unset CUDA_HOME CUDA_PATH
 if [ -x /usr/local/cuda/bin/nvcc ]; then
     export CUDA_HOME=/usr/local/cuda

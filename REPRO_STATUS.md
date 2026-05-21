@@ -15,6 +15,9 @@ verifiers, Prime sandboxes, and Prime tunnels.
 - max model length: `131072`
 - default CUDA graph mode under test: `FULL_AND_PIECEWISE`
 - HF cache: `/beegfs/huggingface`
+- Local sbatch wrappers reuse the compiled extension `.so` files from
+  `/home/daniel/git/vllm/vllm` via untracked symlinks. This keeps Python imports
+  pointed at this fresh worktree while avoiding a full local vLLM rebuild.
 
 ## Real data source
 
@@ -74,4 +77,6 @@ sbatch repro_nemotron_nano_swe_chat_ring_server.sbatch
 
 ## Results
 
-- Pending: run the high-pressure vLLM OpenAI server replay on this fresh branch.
+- `19359`: failed before model load because the fresh worktree did not have
+  compiled flash-attention extensions. Fixed the sbatch wrappers to create
+  untracked symlinks to the compiled extensions before importing vLLM.
