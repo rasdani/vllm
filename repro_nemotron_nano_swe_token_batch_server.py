@@ -62,6 +62,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--timeout-s", type=float, default=1800.0)
+    parser.add_argument("--request-model", default=MODEL)
+    parser.add_argument("--lora-name", default=None)
+    parser.add_argument("--lora-path", type=Path, default=None)
+    parser.add_argument("--lora-load-inplace-cycles", type=int, default=0)
     return parser.parse_args()
 
 
@@ -226,7 +230,7 @@ def nonfinite_paths(value: Any, path: str = "$") -> list[tuple[str, float]]:
 
 def make_body(record: TokenReplayRecord, args: argparse.Namespace) -> dict[str, Any]:
     return {
-        "model": MODEL,
+        "model": args.lora_name or args.request_model,
         "prompt": record.prompt_token_ids,
         "stream": False,
         "echo": False,
@@ -320,6 +324,38 @@ async def post_completion(
     return "ok"
 
 
+async def load_lora_adapter(
+    client: httpx.AsyncClient,
+    args: argparse.Namespace,
+) -> None:
+    if args.lora_path is None:
+        return
+    if args.lora_name is None:
+        raise ValueError("--lora-name is required when --lora-path is set")
+
+    cycles = max(args.lora_load_inplace_cycles, 1)
+    for cycle in range(cycles):
+        body: dict[str, Any] = {
+            "lora_name": args.lora_name,
+            "lora_path": str(args.lora_path),
+        }
+        if cycle > 0:
+            body["load_inplace"] = True
+        response = await client.post("/load_lora_adapter", json=body)
+        if response.status_code >= 400:
+            raise RuntimeError(
+                "LoRA load failed "
+                f"cycle={cycle + 1}/{cycles} status={response.status_code} "
+                f"text={response.text[:1600]!r}"
+            )
+        print(
+            "TOKEN_BATCH_LORA_LOADED "
+            f"name={args.lora_name} path={args.lora_path} "
+            f"cycle={cycle + 1}/{cycles} response={response.text[:400]!r}",
+            flush=True,
+        )
+
+
 async def main_async() -> int:
     args = parse_args()
     records = collect_token_records(args)
@@ -342,6 +378,8 @@ async def main_async() -> int:
         limits=limits,
         trust_env=False,
     ) as client:
+        await load_lora_adapter(client, args)
+
         tasks = [
             post_completion(client, semaphore, make_body(record, args), record)
             for record in records

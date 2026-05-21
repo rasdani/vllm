@@ -21,6 +21,7 @@ export PATH="/home/daniel/git/vllm/.venv/bin:$PATH"
 export HF_HOME=/beegfs/huggingface
 export HF_HUB_CACHE=/beegfs/huggingface/hub
 export VLLM_USE_DEEP_GEMM=0
+export VLLM_ALLOW_RUNTIME_LORA_UPDATING="${VLLM_ALLOW_RUNTIME_LORA_UPDATING:-True}"
 export VLLM_REPRO_SHAPE_TRACE_LIMIT="${VLLM_REPRO_SHAPE_TRACE_LIMIT:-30000}"
 export TRITON_CACHE_DIR=/tmp/triton-cache-$USER-$SLURM_JOB_ID
 export VLLM_CACHE_ROOT=/tmp/.vllm_cache_$USER
@@ -73,6 +74,12 @@ TOKEN_CONCURRENCY="${TOKEN_CONCURRENCY:-191}"
 TOKEN_MAX_TOKENS="${TOKEN_MAX_TOKENS:-512}"
 TOKEN_TEMPERATURE="${TOKEN_TEMPERATURE:-1.0}"
 ENABLE_LORA="${ENABLE_LORA:-0}"
+LORA_NAME="${LORA_NAME:-}"
+LORA_PATH="${LORA_PATH:-}"
+LORA_LOAD_INPLACE_CYCLES="${LORA_LOAD_INPLACE_CYCLES:-0}"
+if [ -n "$LORA_PATH" ] && [ -z "$LORA_NAME" ]; then
+    LORA_NAME="nemotron-step1-lora"
+fi
 OUT_DIR="/beegfs/outputs/vllm-nemotron-nano-token-batch-${SLURM_JOB_ID}"
 mkdir -p "$OUT_DIR"
 export VLLM_REPRO_SHAPE_TRACE_DIR="$OUT_DIR/shape_trace"
@@ -108,10 +115,14 @@ trap cleanup EXIT
     echo "token_max_tokens=$TOKEN_MAX_TOKENS"
     echo "token_temperature=$TOKEN_TEMPERATURE"
     echo "enable_lora=$ENABLE_LORA"
+    echo "lora_name=$LORA_NAME"
+    echo "lora_path=$LORA_PATH"
+    echo "lora_load_inplace_cycles=$LORA_LOAD_INPLACE_CYCLES"
     echo "cudagraph_mode=$CUDAGRAPH_MODE"
     echo "hf_home=$HF_HOME"
     echo "hf_hub_cache=$HF_HUB_CACHE"
     echo "vllm_use_deep_gemm=$VLLM_USE_DEEP_GEMM"
+    echo "vllm_allow_runtime_lora_updating=$VLLM_ALLOW_RUNTIME_LORA_UPDATING"
     echo "vllm_repro_shape_trace_dir=$VLLM_REPRO_SHAPE_TRACE_DIR"
     echo "vllm_repro_shape_trace_limit=$VLLM_REPRO_SHAPE_TRACE_LIMIT"
     echo "cuda_home=${CUDA_HOME:-}"
@@ -130,7 +141,7 @@ PY
 } | tee "$OUT_DIR/run.info"
 
 server_args=()
-if [ "$ENABLE_LORA" = "1" ]; then
+if [ "$ENABLE_LORA" = "1" ] || [ -n "$LORA_PATH" ]; then
     server_args+=(--enable-lora --max-loras 12 --max-cpu-loras 100)
 fi
 
@@ -178,6 +189,15 @@ if [ "$READY" != "1" ]; then
     exit 1
 fi
 
+client_args=()
+if [ -n "$LORA_PATH" ]; then
+    client_args+=(
+        --lora-name "$LORA_NAME"
+        --lora-path "$LORA_PATH"
+        --lora-load-inplace-cycles "$LORA_LOAD_INPLACE_CYCLES"
+    )
+fi
+
 /home/daniel/git/vllm/.venv/bin/python repro_nemotron_nano_swe_token_batch_server.py \
     --base-url "http://127.0.0.1:$PORT/v1" \
     --rollouts "$ROLLOUT_PATH" \
@@ -191,4 +211,5 @@ fi
     --concurrency "$TOKEN_CONCURRENCY" \
     --max-tokens "$TOKEN_MAX_TOKENS" \
     --temperature "$TOKEN_TEMPERATURE" \
+    "${client_args[@]}" \
     2>&1 | tee "$CLIENT_LOG"
