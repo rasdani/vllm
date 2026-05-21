@@ -74,13 +74,16 @@ cd /home/daniel/git/vllm-nemotron-vllm-repro
 HF_HOME=/beegfs/huggingface \
 HF_HUB_CACHE=/beegfs/huggingface/hub \
 CUDAGRAPH_MODE=FULL_AND_PIECEWISE \
-PAIRS='168:162,176:168,160:152,232:227,224:218' \
-REPEATS=2 \
-FILL_MAX_TOKENS=96 \
-PROBE_MAX_TOKENS=192 \
-FILL_PROMPT_LEN=1024 \
-PROBE_PROMPT_LEN=0 \
-sbatch repro_nemotron_nano_swe_token_width_poison_server.sbatch
+MAX_ROLLOUTS=512 \
+MAX_REQUESTS=2048 \
+MIN_TURN_INDEX=4 \
+MAX_TURN_INDEX=9999 \
+CHAT_CONCURRENCY=512 \
+CHAT_MAX_COMPLETION_TOKENS=512 \
+CHAT_FORCE_IGNORE_EOS=0 \
+CHAT_ALLOWED_TOKEN_IDS= \
+VLLM_DEBUG_PADDED_INPUT_IDS=0 \
+sbatch repro_nemotron_nano_swe_rollout_prefix_server.sbatch
 ```
 
 ## Results
@@ -150,3 +153,23 @@ sbatch repro_nemotron_nano_swe_token_width_poison_server.sbatch
   `status_counts={'ok': 260}` and `RESULT no_nonfinite_observed`. This makes
   token id `0` look like a symptom or necessary downstream ingredient, not by
   itself sufficient to create the NaN from a fresh vLLM server.
+- `19372`: first rollout-prefix replay attempt against the saved rollout corpus.
+  It selected 2048 reconstructed assistant-turn prefixes from 512 saved
+  rollouts, but the saved rollout `tool_calls` used a compact shape
+  (`id`/`name`/`arguments`) while `/v1/chat/completions` expects the OpenAI
+  tool-call shape (`id`/`type=function`/`function.name`/`function.arguments`).
+  Result was `status_counts={'http_error': 2046, 'exception': 2}` with request
+  validation errors, so this run did not exercise the target NaN path. Fixed by
+  normalizing compact rollout tool calls before sending them to vLLM.
+- `19374`: fixed rollout-prefix replay against the same saved rollout corpus.
+  Command shape: 512 saved rollouts, 2048 selected assistant-turn prefixes,
+  `MIN_TURN_INDEX=4`, `CHAT_CONCURRENCY=512`, `CHAT_MAX_COMPLETION_TOKENS=512`,
+  `/v1/chat/completions`, `FULL_AND_PIECEWISE`, `VLLM_USE_DEEP_GEMM=0`,
+  `max_model_len=131072`, and HF cache under `/beegfs/huggingface`. Startup was
+  slow because FlashInfer fused-MoE kernels were JIT compiled during Mamba warmup,
+  then the server became healthy at attempt 87. Result was
+  `SUMMARY elapsed_seconds=103.24 status_counts={'ok': 2048}` and
+  `RESULT no_nonfinite_observed`. This is the strongest current vLLM-only
+  negative control: saved real rollout prefixes plus high server concurrency are
+  still not sufficient to reproduce the hosted-training NaN outside the original
+  training/server state.
