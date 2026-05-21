@@ -207,6 +207,45 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   IDs, exact `191 -> 192` FULL decode shape, one padded row, and the same broad
   prompt-length distribution are still not sufficient on a fresh standalone vLLM
   server.
+- `19383`: token-ID `/v1/completions` replay with request churn. The script kept
+  the 191 target-matched real rollout prefixes first, then appended more real
+  rollout-prefix token requests for a total of 2048 requests at concurrency 512.
+  Result was `TOKEN_BATCH_SUMMARY elapsed_seconds=130.47
+  status_counts={'ok': 2048}` and `TOKEN_BATCH_RESULT no_nonfinite_observed`.
+  The shape trace saw 2742 GPU model-runner batches:
+
+  ```text
+  modes={'NONE': 1701, 'FULL': 1041}
+  top shape: 351 x 512 -> 512 FULL
+  target hits: 1 x 191 -> 192 FULL, 1 x 162 -> 168 FULL,
+               2 x 157 -> 160 FULL, 1 x 227 -> 232 FULL
+  scheduler waiting_count was nonzero in many mixed prefill/decode rows.
+  ```
+
+  This added training-like queue pressure and mixed prefill/decode churn, but it
+  still did not reproduce the NaN.
+- `19387`: same churn replay as `19383`, but with the failing deployment's LoRA
+  server mode enabled: `--enable-lora --max-loras 12 --max-cpu-loras 100`.
+  This did activate the relevant model path:
+
+  ```text
+  MoE model detected. Using fused MoE LoRA implementation.
+  ```
+
+  Result was `TOKEN_BATCH_SUMMARY elapsed_seconds=187.30
+  status_counts={'ok': 2048}` and `TOKEN_BATCH_RESULT no_nonfinite_observed`.
+  Shape trace saw 2551 GPU model-runner batches:
+
+  ```text
+  modes={'NONE': 1741, 'FULL': 810}
+  top shapes: 191 x 512 -> 512 FULL, 62 x 511 -> 512 FULL
+  target hits: 1 x 191 -> 192 FULL, 4 x 227 -> 232 FULL,
+               1 x 150 -> 152 FULL
+  ```
+
+  This rules out the simple "fresh server plus LoRA-enabled Nemotron MoE path
+  plus real tokenized rollout churn" hypothesis on the current vLLM main-based
+  repro branch.
 
 ## Current interpretation
 
@@ -214,11 +253,15 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   vLLM-only server process.
 - Shape alone is not sufficient. `19380` hit the exact `191 -> 192` FULL decode
   shape hundreds of times and stayed finite.
-- A useful next standalone direction is to reproduce more of the training
-  temporal state, not just a single concurrent decode width. In the failing
-  training trace, the padded-only `162 -> 168` FULL record appears adjacent to
-  the real-row `191 -> 192` FULL non-finite record. The standalone token replay
-  hit these shapes in the opposite natural order and stayed finite. A tighter
-  next repro should try to drive the same shape sequence and live-request
-  churn: first a `162 -> 168` FULL decode wave, then a `191 -> 192` FULL decode
-  wave, while keeping long prompts resident across both waves.
+- Generic server queue pressure is not sufficient. `19383` added 2048 real
+  tokenized rollout-prefix requests at concurrency 512 and stayed finite.
+- Enabling the deployment's LoRA server mode is not sufficient on current vLLM
+  main. `19387` reached the fused MoE LoRA implementation and stayed finite.
+- The remaining high-signal differences from the failing training deployment are
+  version and stateful runtime path:
+    - failing deployment logs show vLLM `0.20.2`, while this standalone branch is
+      current vLLM main (`0.21.1rc1.dev13+g6147c7022...`);
+    - failing deployment used the prime-rl filesystem weight-update worker
+      extension;
+    - the real training server may have seen weight update / reload state before
+      the first NaN, while all standalone runs above use a fresh static model.
