@@ -109,3 +109,25 @@ sbatch repro_nemotron_nano_swe_token_width_poison_server.sbatch
   client-side `httpx.ReadError`s in long-prompt probe waves. There was no
   `REQUEST_NONFINITE`, no `Out of range float values`, and no server-side
   worker death or NaN traceback. This did not reproduce the target bug.
+- `19364`: lightweight synthetic token-width probe with the
+  `VLLM_DEBUG_PADDED_INPUT_IDS=1` diagnostic enabled. Command shape was
+  `PAIRS='168:162,232:227'`, `REPEATS=1`, `FILL_MAX_TOKENS=32`,
+  `PROBE_MAX_TOKENS=32`, `/v1/completions`, `FULL_AND_PIECEWISE`,
+  `VLLM_USE_DEEP_GEMM=0`, `max_model_len=131072`. Result was
+  `SUMMARY status_counts={'ok': 786, 'exception': 3}` and
+  `RESULT inconclusive: non-NaN request errors occurred`; the exceptions were
+  again client-side `httpx.ReadError`s. The important finding is that the
+  external vLLM-only server workload does hit `GPUModelRunner._preprocess()` with
+  nonzero stale padded token IDs:
+
+  ```text
+  PADDED_INPUT_IDS_DEBUG rank=0 scheduled=166 padded=168 pad_rows=2 any_nonzero=True sample=[1429, 8030]
+  PADDED_INPUT_IDS_DEBUG rank=0 scheduled=150 padded=152 pad_rows=2 any_nonzero=True sample=[1729, 4460]
+  PADDED_INPUT_IDS_DEBUG rank=0 scheduled=229 padded=232 pad_rows=3 any_nonzero=True ...
+  ```
+
+  Observed padded execution shapes included `150->152`, `157->160`,
+  `164/166/167->168`, `174->176`, `222->224`, and `229/231->232`, all with
+  `any_nonzero=True`. This confirms the stale padded-input mechanism is live in
+  a vLLM-only OpenAI-server run, but this reduced workload still did not surface
+  the final JSON NaN.
