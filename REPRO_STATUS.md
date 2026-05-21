@@ -89,3 +89,10 @@ sbatch repro_nemotron_nano_swe_chat_ring_server.sbatch
   `DeepGEMM backend is not available or outdated`. This is the known Nemotron
   startup incompatibility; the hosted workaround is `VLLM_USE_DEEP_GEMM=0`.
   Updated all repro sbatch wrappers to set and log that environment variable.
+- `19362`: faithful server chat-ring replay reached vLLM health and completed
+  the full captured request ring: 65 base records repeated 8 times, 520 total
+  `/v1/chat/completions` requests, concurrency 512, `ignore_eos=true`,
+  `max_completion_tokens=2048`, `FULL_AND_PIECEWISE`, `VLLM_USE_DEEP_GEMM=0`.
+  Result was `status_counts={'ok': 520}` and `RESULT no_nonfinite_observed`.
+  This means captured chat payload plus high server concurrency is not by itself
+  sufficient on current vLLM `origin/main`; continue with shape-focused probes.
