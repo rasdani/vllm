@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import itertools
+import json
+import os
 import time
 from collections import defaultdict, deque
 from collections.abc import Iterable
@@ -59,6 +61,24 @@ from vllm.v1.structured_output import StructuredOutputManager
 from vllm.v1.utils import record_function_or_nullcontext
 
 logger = init_logger(__name__)
+
+
+def _summarize_values(values: list[int], limit: int = 16) -> dict[str, Any]:
+    if not values:
+        return {
+            "count": 0,
+            "head": [],
+            "tail": [],
+            "min": None,
+            "max": None,
+        }
+    return {
+        "count": len(values),
+        "head": values[:limit],
+        "tail": values[-limit:],
+        "min": min(values),
+        "max": max(values),
+    }
 
 
 class Scheduler(SchedulerInterface):
@@ -901,6 +921,50 @@ class Scheduler(SchedulerInterface):
             free_encoder_mm_hashes=self.encoder_cache_manager.get_freed_mm_hashes(),
             new_block_ids_to_zero=new_block_ids_to_zero,
         )
+
+        if trace_dir := os.environ.get("VLLM_REPRO_SHAPE_TRACE_DIR"):
+            trace_count = getattr(self, "_repro_scheduler_shape_trace_count", 0)
+            try:
+                trace_limit = int(
+                    os.environ.get("VLLM_REPRO_SHAPE_TRACE_LIMIT", "20000")
+                )
+            except ValueError:
+                trace_limit = 20000
+            if trace_count < trace_limit:
+                os.makedirs(trace_dir, exist_ok=True)
+                scheduled_values = list(num_scheduled_tokens.values())
+                row = {
+                    "schema": "vllm_repro.scheduler_shape.v1",
+                    "created_unix": time.time(),
+                    "pid": os.getpid(),
+                    "scheduled_req_count": len(num_scheduled_tokens),
+                    "scheduled_new_req_count": len(scheduled_new_reqs),
+                    "scheduled_resumed_req_count": len(scheduled_resumed_reqs),
+                    "scheduled_cached_req_count": len(scheduled_running_reqs),
+                    "running_count": len(self.running),
+                    "waiting_count": len(self.waiting),
+                    "skipped_waiting_count": len(self.skipped_waiting),
+                    "finished_req_count": len(self.finished_req_ids),
+                    "preempted_req_count": len(preempted_reqs),
+                    "total_num_scheduled_tokens": total_num_scheduled_tokens,
+                    "num_scheduled_tokens": _summarize_values(scheduled_values),
+                    "uniform_decode": (
+                        bool(scheduled_values)
+                        and min(scheduled_values) == 1
+                        and max(scheduled_values) == 1
+                    ),
+                    "new_block_ids_to_zero_count": (
+                        len(new_block_ids_to_zero or [])
+                    ),
+                    "req_ids_head": list(num_scheduled_tokens.keys())[:16],
+                    "req_ids_tail": list(num_scheduled_tokens.keys())[-16:],
+                }
+                path = os.path.join(
+                    trace_dir, f"scheduler_shapes.{os.getpid()}.jsonl"
+                )
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(row, sort_keys=True) + "\n")
+                self._repro_scheduler_shape_trace_count = trace_count + 1
 
         # NOTE(Kuntai): this function is designed for multiple purposes:
         # 1. Plan the KV cache store

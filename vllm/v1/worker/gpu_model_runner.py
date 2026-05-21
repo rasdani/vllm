@@ -4,6 +4,7 @@
 import functools
 import gc
 import itertools
+import json
 import os
 import threading
 import time
@@ -227,6 +228,37 @@ if TYPE_CHECKING:
     from vllm.v1.worker.encoder_cudagraph import EncoderCudaGraphManager
 
 logger = init_logger(__name__)
+
+
+def _repro_summarize_sequence(
+    values: Sequence[Any],
+    limit: int = 16,
+) -> dict[str, Any]:
+    items = [int(value) for value in values]
+    if not items:
+        return {
+            "count": 0,
+            "head": [],
+            "tail": [],
+            "min": None,
+            "max": None,
+        }
+    return {
+        "count": len(items),
+        "head": items[:limit],
+        "tail": items[-limit:],
+        "min": min(items),
+        "max": max(items),
+    }
+
+
+def _repro_is_global_rank_zero() -> bool:
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return True
+    try:
+        return torch.distributed.get_rank() == 0
+    except RuntimeError:
+        return True
 
 AttnMetadataDict: TypeAlias = dict[str, AttentionMetadata]
 # list when ubatching is enabled
@@ -4099,6 +4131,61 @@ class GPUModelRunner(
             num_reqs_padded = (
                 batch_desc.num_reqs if batch_desc.num_reqs is not None else num_reqs
             )
+            if (
+                (trace_dir := os.environ.get("VLLM_REPRO_SHAPE_TRACE_DIR"))
+                and _repro_is_global_rank_zero()
+            ):
+                trace_count = getattr(self, "_repro_gpu_shape_trace_count", 0)
+                try:
+                    trace_limit = int(
+                        os.environ.get("VLLM_REPRO_SHAPE_TRACE_LIMIT", "20000")
+                    )
+                except ValueError:
+                    trace_limit = 20000
+                if trace_count < trace_limit:
+                    os.makedirs(trace_dir, exist_ok=True)
+                    computed_tokens = self.input_batch.num_computed_tokens_cpu[
+                        :num_reqs
+                    ]
+                    prompt_tokens = self.input_batch.num_prompt_tokens[:num_reqs]
+                    row = {
+                        "schema": "vllm_repro.gpu_batch_shape.v1",
+                        "created_unix": time.time(),
+                        "pid": os.getpid(),
+                        "num_reqs": num_reqs,
+                        "num_reqs_padded": num_reqs_padded,
+                        "num_tokens_unpadded": num_tokens_unpadded,
+                        "num_tokens_padded": num_tokens_padded,
+                        "pad_rows": num_tokens_padded - num_tokens_unpadded,
+                        "max_num_scheduled_tokens": max_num_scheduled_tokens,
+                        "num_scheduled_tokens": _repro_summarize_sequence(
+                            num_scheduled_tokens_np
+                        ),
+                        "num_computed_tokens": _repro_summarize_sequence(
+                            computed_tokens
+                        ),
+                        "num_prompt_tokens": _repro_summarize_sequence(prompt_tokens),
+                        "cudagraph_mode": str(cudagraph_mode),
+                        "batch_descriptor": {
+                            "num_reqs": batch_desc.num_reqs,
+                            "num_tokens": batch_desc.num_tokens,
+                            "uniform": batch_desc.uniform,
+                            "has_lora": batch_desc.has_lora,
+                            "num_active_loras": batch_desc.num_active_loras,
+                        },
+                        "should_ubatch": should_ubatch,
+                        "num_tokens_across_dp": num_tokens_across_dp,
+                        "use_cascade_attn": cascade_attn_prefix_lens is not None,
+                        "req_ids_head": req_ids[:16],
+                        "req_ids_tail": req_ids[-16:],
+                    }
+                    path = os.path.join(
+                        trace_dir, f"gpu_batch_shapes.{os.getpid()}.jsonl"
+                    )
+                    with open(path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(row, sort_keys=True) + "\n")
+                    self._repro_gpu_shape_trace_count = trace_count + 1
+
             ubatch_slices, ubatch_slices_padded = maybe_create_ubatch_slices(
                 should_ubatch,
                 num_scheduled_tokens_np,

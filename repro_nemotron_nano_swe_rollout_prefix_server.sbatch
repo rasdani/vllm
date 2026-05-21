@@ -23,6 +23,7 @@ export HF_HUB_CACHE=/beegfs/huggingface/hub
 export VLLM_USE_DEEP_GEMM=0
 export VLLM_DEBUG_PADDED_INPUT_IDS="${VLLM_DEBUG_PADDED_INPUT_IDS:-0}"
 export VLLM_DEBUG_PADDED_INPUT_IDS_LIMIT="${VLLM_DEBUG_PADDED_INPUT_IDS_LIMIT:-40}"
+export VLLM_REPRO_SHAPE_TRACE_LIMIT="${VLLM_REPRO_SHAPE_TRACE_LIMIT:-20000}"
 export TRITON_CACHE_DIR=/tmp/triton-cache-$USER-$SLURM_JOB_ID
 export VLLM_CACHE_ROOT=/tmp/.vllm_cache_$USER
 export FLASHINFER_WORKSPACE_BASE=/tmp/flashinfer-workspace-$USER-$SLURM_JOB_ID
@@ -73,6 +74,8 @@ CHAT_ALLOWED_TOKEN_IDS="${CHAT_ALLOWED_TOKEN_IDS:-}"
 CHAT_FORCE_IGNORE_EOS="${CHAT_FORCE_IGNORE_EOS:-0}"
 OUT_DIR="/beegfs/outputs/vllm-nemotron-nano-rollout-prefix-${SLURM_JOB_ID}"
 mkdir -p "$OUT_DIR"
+export VLLM_REPRO_SHAPE_TRACE_DIR="$OUT_DIR/shape_trace"
+mkdir -p "$VLLM_REPRO_SHAPE_TRACE_DIR"
 
 SERVER_LOG="$OUT_DIR/server.log"
 CLIENT_LOG="$OUT_DIR/client.log"
@@ -107,6 +110,8 @@ trap cleanup EXIT
     echo "vllm_use_deep_gemm=$VLLM_USE_DEEP_GEMM"
     echo "vllm_debug_padded_input_ids=$VLLM_DEBUG_PADDED_INPUT_IDS"
     echo "vllm_debug_padded_input_ids_limit=$VLLM_DEBUG_PADDED_INPUT_IDS_LIMIT"
+    echo "vllm_repro_shape_trace_dir=$VLLM_REPRO_SHAPE_TRACE_DIR"
+    echo "vllm_repro_shape_trace_limit=$VLLM_REPRO_SHAPE_TRACE_LIMIT"
     echo "cuda_home=${CUDA_HOME:-}"
     echo "nvcc=$(command -v nvcc || true)"
     echo "ninja=$(command -v ninja || true)"
