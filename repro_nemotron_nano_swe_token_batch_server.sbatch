@@ -64,6 +64,7 @@ CUDAGRAPH_MODE="${CUDAGRAPH_MODE:-FULL_AND_PIECEWISE}"
 ROLLOUT_PATH="${ROLLOUT_PATH:-/beegfs/daniel/nemotron-nano-swe-step7-default-128k/run_default/rollouts/step_0/train_rollouts.jsonl}"
 TARGET_TRACE="${TARGET_TRACE:-/beegfs/daniel/nemotron-nano-swe-collector-20260521-235954/vllm_nan_trace/cudagraph_replay_nonfinite.1236436.jsonl}"
 TARGET_WIDTH="${TARGET_WIDTH:-191}"
+REPLAY_COUNT="${REPLAY_COUNT:-$TARGET_WIDTH}"
 MAX_ROLLOUTS="${MAX_ROLLOUTS:-512}"
 MAX_CANDIDATES="${MAX_CANDIDATES:-8192}"
 MIN_TURN_INDEX="${MIN_TURN_INDEX:-4}"
@@ -97,6 +98,7 @@ trap cleanup EXIT
     echo "rollout_path=$ROLLOUT_PATH"
     echo "target_trace=$TARGET_TRACE"
     echo "target_width=$TARGET_WIDTH"
+    echo "replay_count=$REPLAY_COUNT"
     echo "max_rollouts=$MAX_ROLLOUTS"
     echo "max_candidates=$MAX_CANDIDATES"
     echo "min_turn_index=$MIN_TURN_INDEX"
@@ -173,6 +175,7 @@ fi
     --rollouts "$ROLLOUT_PATH" \
     --target-trace "$TARGET_TRACE" \
     --target-width "$TARGET_WIDTH" \
+    --replay-count "$REPLAY_COUNT" \
     --max-rollouts "$MAX_ROLLOUTS" \
     --max-candidates "$MAX_CANDIDATES" \
     --min-turn-index "$MIN_TURN_INDEX" \

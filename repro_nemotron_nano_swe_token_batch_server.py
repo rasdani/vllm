@@ -53,6 +53,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target-trace", type=Path, default=TARGET_TRACE)
     parser.add_argument("--target-width", type=int, default=191)
+    parser.add_argument("--replay-count", type=int, default=None)
     parser.add_argument("--max-rollouts", type=int, default=512)
     parser.add_argument("--max-candidates", type=int, default=8192)
     parser.add_argument("--min-turn-index", type=int, default=4)
@@ -116,11 +117,17 @@ def choose_closest_records(
     candidates: list[TokenReplayRecord],
     target_lengths: list[int],
     width: int,
+    replay_count: int | None,
 ) -> list[TokenReplayRecord]:
     if len(candidates) < width:
         raise ValueError(f"Need at least {width} candidates, got {len(candidates)}")
+    limit = replay_count if replay_count is not None else width
+    if limit < width:
+        raise ValueError(f"replay-count must be >= target-width ({width})")
+    if len(candidates) < limit:
+        raise ValueError(f"Need at least {limit} candidates, got {len(candidates)}")
     if not target_lengths:
-        return candidates[:width]
+        return candidates[:limit]
 
     unused = set(range(len(candidates)))
     selected: list[TokenReplayRecord] = []
@@ -140,6 +147,15 @@ def choose_closest_records(
                 target_prompt_len=target_len,
             )
         )
+    selected_keys = {(record.rollout_index, record.turn_index) for record in selected}
+    for candidate in candidates:
+        if len(selected) >= limit:
+            break
+        key = (candidate.rollout_index, candidate.turn_index)
+        if key in selected_keys:
+            continue
+        selected.append(candidate)
+        selected_keys.add(key)
     return selected
 
 
@@ -170,8 +186,11 @@ def collect_token_records(args: argparse.Namespace) -> list[TokenReplayRecord]:
         )
 
     target_lengths = load_target_prompt_lengths(args.target_trace, args.target_width)
-    selected = choose_closest_records(candidates, target_lengths, args.target_width)
+    selected = choose_closest_records(
+        candidates, target_lengths, args.target_width, args.replay_count
+    )
     lengths = [len(record.prompt_token_ids) for record in selected]
+    target_matched = sum(record.target_prompt_len is not None for record in selected)
     deltas = [
         abs(length - record.target_prompt_len)
         for length, record in zip(lengths, selected)
@@ -180,7 +199,7 @@ def collect_token_records(args: argparse.Namespace) -> list[TokenReplayRecord]:
     print(
         "TOKEN_BATCH_INPUTS "
         f"candidates={len(candidates)} selected={len(selected)} "
-        f"target_width={args.target_width} "
+        f"target_width={args.target_width} target_matched={target_matched} "
         f"prompt_len_min={min(lengths)} prompt_len_max={max(lengths)} "
         f"prompt_len_head={lengths[:16]} prompt_len_tail={lengths[-16:]} "
         f"target_delta_max={max(deltas) if deltas else None}",
