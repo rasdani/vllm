@@ -72,6 +72,7 @@ MAX_TURN_INDEX="${MAX_TURN_INDEX:-9999}"
 TOKEN_CONCURRENCY="${TOKEN_CONCURRENCY:-191}"
 TOKEN_MAX_TOKENS="${TOKEN_MAX_TOKENS:-512}"
 TOKEN_TEMPERATURE="${TOKEN_TEMPERATURE:-1.0}"
+ENABLE_LORA="${ENABLE_LORA:-0}"
 OUT_DIR="/beegfs/outputs/vllm-nemotron-nano-token-batch-${SLURM_JOB_ID}"
 mkdir -p "$OUT_DIR"
 export VLLM_REPRO_SHAPE_TRACE_DIR="$OUT_DIR/shape_trace"
@@ -106,6 +107,7 @@ trap cleanup EXIT
     echo "token_concurrency=$TOKEN_CONCURRENCY"
     echo "token_max_tokens=$TOKEN_MAX_TOKENS"
     echo "token_temperature=$TOKEN_TEMPERATURE"
+    echo "enable_lora=$ENABLE_LORA"
     echo "cudagraph_mode=$CUDAGRAPH_MODE"
     echo "hf_home=$HF_HOME"
     echo "hf_hub_cache=$HF_HUB_CACHE"
@@ -127,6 +129,11 @@ print(f"cuda={torch.version.cuda}")
 PY
 } | tee "$OUT_DIR/run.info"
 
+server_args=()
+if [ "$ENABLE_LORA" = "1" ]; then
+    server_args+=(--enable-lora --max-loras 12 --max-cpu-loras 100)
+fi
+
 /home/daniel/git/vllm/.venv/bin/python -m vllm.entrypoints.openai.api_server \
     --host 127.0.0.1 \
     --port "$PORT" \
@@ -143,6 +150,7 @@ PY
     --return-tokens-as-token-ids \
     --disable-uvicorn-access-log \
     --compilation-config "$COMPILATION_CONFIG" \
+    "${server_args[@]}" \
     >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
