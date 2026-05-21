@@ -20,6 +20,7 @@ export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 export PATH="/home/daniel/git/vllm/.venv/bin:$PATH"
 export HF_HOME=/beegfs/huggingface
 export HF_HUB_CACHE=/beegfs/huggingface/hub
+export VLLM_USE_DEEP_GEMM=0
 export TRITON_CACHE_DIR=/tmp/triton-cache-$USER-$SLURM_JOB_ID
 export VLLM_CACHE_ROOT=/tmp/.vllm_cache_$USER
 export FLASHINFER_WORKSPACE_BASE=/tmp/flashinfer-workspace-$USER-$SLURM_JOB_ID
@@ -70,6 +71,7 @@ mkdir -p "$OUT_DIR"
     echo "cudagraph_mode=$CUDAGRAPH_MODE"
     echo "hf_home=$HF_HOME"
     echo "hf_hub_cache=$HF_HUB_CACHE"
+    echo "vllm_use_deep_gemm=$VLLM_USE_DEEP_GEMM"
     echo "cuda_home=${CUDA_HOME:-}"
     echo "nvcc=$(command -v nvcc || true)"
     echo "ninja=$(command -v ninja || true)"

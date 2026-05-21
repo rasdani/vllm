@@ -84,3 +84,8 @@ sbatch repro_nemotron_nano_swe_chat_ring_server.sbatch
   while FlashInfer tried to JIT a CUTLASS MoE kernel because `ninja` was not
   visible in the worker PATH. Fixed the sbatch wrappers to prepend
   `/home/daniel/git/vllm/.venv/bin`, which contains the `ninja` binary.
+- `19361`: progressed through weight load, torch compile, and FlashInfer MoE JIT,
+  then failed during startup warmup with
+  `DeepGEMM backend is not available or outdated`. This is the known Nemotron
+  startup incompatibility; the hosted workaround is `VLLM_USE_DEEP_GEMM=0`.
+  Updated all repro sbatch wrappers to set and log that environment variable.
