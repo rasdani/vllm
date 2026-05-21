@@ -62,17 +62,20 @@ evidence, not the primary standalone fixture.
     - Synthetic width probe using real failing prompt token IDs.
     - Use only after real chat replay attempts, and label results as synthetic.
 
-## Current next command
+## Latest command
 
 ```bash
 cd /home/daniel/git/vllm-nemotron-vllm-repro
 HF_HOME=/beegfs/huggingface \
 HF_HUB_CACHE=/beegfs/huggingface/hub \
 CUDAGRAPH_MODE=FULL_AND_PIECEWISE \
-CHAT_REPEAT=8 \
-CHAT_CONCURRENCY=512 \
-CHAT_MAX_COMPLETION_TOKENS=2048 \
-sbatch repro_nemotron_nano_swe_chat_ring_server.sbatch
+PAIRS='168:162,176:168,160:152,232:227,224:218' \
+REPEATS=2 \
+FILL_MAX_TOKENS=96 \
+PROBE_MAX_TOKENS=192 \
+FILL_PROMPT_LEN=1024 \
+PROBE_PROMPT_LEN=0 \
+sbatch repro_nemotron_nano_swe_token_width_poison_server.sbatch
 ```
 
 ## Results
@@ -96,3 +99,13 @@ sbatch repro_nemotron_nano_swe_chat_ring_server.sbatch
   Result was `status_counts={'ok': 520}` and `RESULT no_nonfinite_observed`.
   This means captured chat payload plus high server concurrency is not by itself
   sufficient on current vLLM `origin/main`; continue with shape-focused probes.
+- `19363`: synthetic token-width poison probe reached vLLM health and exercised
+  the known-suspicious padded capture widths with real failing prompt token IDs:
+  `168:162`, `176:168`, `160:152`, `232:227`, and `224:218`, two repeats each,
+  `/v1/completions`, `FULL_AND_PIECEWISE`, `VLLM_USE_DEEP_GEMM=0`,
+  `max_model_len=131072`. Result was
+  `SUMMARY status_counts={'ok': 3757, 'exception': 17}` and
+  `RESULT inconclusive: non-NaN request errors occurred`. The 17 failures were
+  client-side `httpx.ReadError`s in long-prompt probe waves. There was no
+  `REQUEST_NONFINITE`, no `Out of range float values`, and no server-side
+  worker death or NaN traceback. This did not reproduce the target bug.
