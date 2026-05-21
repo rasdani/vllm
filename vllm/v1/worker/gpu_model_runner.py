@@ -4,6 +4,7 @@
 import functools
 import gc
 import itertools
+import os
 import threading
 import time
 from collections import defaultdict
@@ -3427,6 +3428,40 @@ class GPUModelRunner(
             input_ids = self.input_ids.gpu[:num_input_tokens]
             inputs_embeds = None
             model_kwargs = self._init_model_kwargs()
+
+        if (
+            os.environ.get("VLLM_DEBUG_PADDED_INPUT_IDS")
+            and input_ids is not None
+            and num_input_tokens > num_scheduled_tokens
+        ):
+            try:
+                log_limit = int(
+                    os.environ.get("VLLM_DEBUG_PADDED_INPUT_IDS_LIMIT", "40")
+                )
+            except ValueError:
+                log_limit = 40
+            debug_count = getattr(self, "_debug_padded_input_ids_count", 0)
+            if debug_count < log_limit:
+                padded = input_ids[num_scheduled_tokens:num_input_tokens]
+                sample_len = min(padded.numel(), 16)
+                any_nonzero = bool(torch.any(padded != 0).item())
+                rank = (
+                    torch.distributed.get_rank()
+                    if torch.distributed.is_available()
+                    and torch.distributed.is_initialized()
+                    else -1
+                )
+                logger.warning(
+                    "PADDED_INPUT_IDS_DEBUG rank=%s scheduled=%s padded=%s "
+                    "pad_rows=%s any_nonzero=%s sample=%s",
+                    rank,
+                    num_scheduled_tokens,
+                    num_input_tokens,
+                    num_input_tokens - num_scheduled_tokens,
+                    any_nonzero,
+                    padded[:sample_len].detach().cpu().tolist(),
+                )
+                self._debug_padded_input_ids_count = debug_count + 1
 
         if self.uses_mrope:
             positions = self.mrope_positions.gpu[:, :num_input_tokens]

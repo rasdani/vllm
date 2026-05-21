@@ -21,6 +21,8 @@ export PATH="/home/daniel/git/vllm/.venv/bin:$PATH"
 export HF_HOME=/beegfs/huggingface
 export HF_HUB_CACHE=/beegfs/huggingface/hub
 export VLLM_USE_DEEP_GEMM=0
+export VLLM_DEBUG_PADDED_INPUT_IDS="${VLLM_DEBUG_PADDED_INPUT_IDS:-0}"
+export VLLM_DEBUG_PADDED_INPUT_IDS_LIMIT="${VLLM_DEBUG_PADDED_INPUT_IDS_LIMIT:-40}"
 export TRITON_CACHE_DIR=/tmp/triton-cache-$USER-$SLURM_JOB_ID
 export VLLM_CACHE_ROOT=/tmp/.vllm_cache_$USER
 export FLASHINFER_WORKSPACE_BASE=/tmp/flashinfer-workspace-$USER-$SLURM_JOB_ID
@@ -99,6 +101,8 @@ trap cleanup EXIT
     echo "hf_home=$HF_HOME"
     echo "hf_hub_cache=$HF_HUB_CACHE"
     echo "vllm_use_deep_gemm=$VLLM_USE_DEEP_GEMM"
+    echo "vllm_debug_padded_input_ids=$VLLM_DEBUG_PADDED_INPUT_IDS"
+    echo "vllm_debug_padded_input_ids_limit=$VLLM_DEBUG_PADDED_INPUT_IDS_LIMIT"
     echo "cuda_home=${CUDA_HOME:-}"
     echo "nvcc=$(command -v nvcc || true)"
     echo "ninja=$(command -v ninja || true)"
