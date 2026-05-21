@@ -55,21 +55,52 @@ def body_content_length(body: dict[str, Any]) -> int:
     return len(json.dumps(body, sort_keys=True, separators=(",", ":")))
 
 
+def collect_input_paths(path: Path) -> list[Path]:
+    if path.is_dir():
+        paths = sorted(path.glob("*chat_nonfinite_response*.json"))
+    else:
+        paths = [path]
+    if not paths:
+        raise ValueError(f"no diagnostic files found at {path}")
+    return paths
+
+
 def load_request_bodies(path: Path) -> list[tuple[str, dict[str, Any]]]:
-    with path.open() as f:
-        diagnostic = json.load(f)
-
     records: list[tuple[str, dict[str, Any]]] = []
-    for index, recent in enumerate(diagnostic.get("recent_requests") or []):
-        body = recent.get("body")
-        if isinstance(body, dict):
-            request_id = recent.get("request_id") or f"recent-{index}"
-            records.append((str(request_id), body))
+    input_paths = collect_input_paths(path)
+    print(
+        "CHAT_REPLAY_INPUTS "
+        f"path={path} files={len(input_paths)} "
+        f"names={[p.name for p in input_paths]}",
+        flush=True,
+    )
 
-    request_body = diagnostic.get("request", {}).get("body")
-    if isinstance(request_body, dict):
-        request_id = diagnostic.get("request_id") or "failing"
-        records.append((str(request_id), request_body))
+    for input_path in input_paths:
+        with input_path.open() as f:
+            diagnostic = json.load(f)
+
+        prefix = input_path.stem
+        per_file_count = 0
+        for index, recent in enumerate(diagnostic.get("recent_requests") or []):
+            body = recent.get("body")
+            if isinstance(body, dict):
+                request_id = recent.get("request_id") or f"recent-{index}"
+                records.append((f"{prefix}:recent:{request_id}", body))
+                per_file_count += 1
+
+        request_body = diagnostic.get("request", {}).get("body")
+        if isinstance(request_body, dict):
+            request_id = diagnostic.get("request_id") or "failing"
+            records.append((f"{prefix}:failing:{request_id}", request_body))
+            per_file_count += 1
+
+        print(
+            "CHAT_REPLAY_INPUT_FILE "
+            f"name={input_path.name} records={per_file_count} "
+            f"request_id={diagnostic.get('request_id')} "
+            f"bad_paths={len(diagnostic.get('response_nonfinite_paths') or [])}",
+            flush=True,
+        )
 
     if not records:
         raise ValueError(f"no request bodies found in {path}")
