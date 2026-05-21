@@ -80,3 +80,7 @@ sbatch repro_nemotron_nano_swe_chat_ring_server.sbatch
 - `19359`: failed before model load because the fresh worktree did not have
   compiled flash-attention extensions. Fixed the sbatch wrappers to create
   untracked symlinks to the compiled extensions before importing vLLM.
+- `19360`: passed model inspection and entered model execution, then failed
+  while FlashInfer tried to JIT a CUTLASS MoE kernel because `ninja` was not
+  visible in the worker PATH. Fixed the sbatch wrappers to prepend
+  `/home/daniel/git/vllm/.venv/bin`, which contains the `ninja` binary.

@@ -17,6 +17,7 @@ export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
 export PYTHONPATH="$PWD:${PYTHONPATH:-}"
+export PATH="/home/daniel/git/vllm/.venv/bin:$PATH"
 export HF_HOME=/beegfs/huggingface
 export HF_HUB_CACHE=/beegfs/huggingface/hub
 export TRITON_CACHE_DIR=/tmp/triton-cache-$USER-$SLURM_JOB_ID
@@ -51,7 +52,7 @@ elif [ -x /usr/local/cuda-12.8/bin/nvcc ]; then
 fi
 if [ -n "${CUDA_HOME:-}" ]; then
     export CUDA_PATH="$CUDA_HOME"
-    export PATH="$CUDA_HOME/bin:$PATH"
+    export PATH="/home/daniel/git/vllm/.venv/bin:$CUDA_HOME/bin:$PATH"
     export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
 fi
 
@@ -71,6 +72,7 @@ mkdir -p "$OUT_DIR"
     echo "hf_hub_cache=$HF_HUB_CACHE"
     echo "cuda_home=${CUDA_HOME:-}"
     echo "nvcc=$(command -v nvcc || true)"
+    echo "ninja=$(command -v ninja || true)"
     echo "flashinfer_workspace_base=$FLASHINFER_WORKSPACE_BASE"
     /home/daniel/git/vllm/.venv/bin/python - <<'PY'
 import importlib.metadata as md
