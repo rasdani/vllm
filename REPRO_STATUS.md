@@ -66,6 +66,12 @@ evidence, not the primary standalone fixture.
     - Uses no prime-rl runtime, verifiers, tools, or sandboxes; it only reads
       persisted rollout JSONL and sends reconstructed `/v1/chat/completions`
       requests to vLLM.
+- `repro_nemotron_nano_swe_token_batch_server.py`
+    - Rebuilds real rollout prefixes, renders them through the model chat
+      template locally, and sends the resulting prompt token IDs to
+      `/v1/completions`.
+    - This avoids chat tool-parser early exits and deliberately holds the
+      suspicious `191 -> 192` one-token FULL CUDA graph decode shape.
 
 ## Latest command
 
@@ -74,16 +80,12 @@ cd /home/daniel/git/vllm-nemotron-vllm-repro
 HF_HOME=/beegfs/huggingface \
 HF_HUB_CACHE=/beegfs/huggingface/hub \
 CUDAGRAPH_MODE=FULL_AND_PIECEWISE \
-MAX_ROLLOUTS=512 \
-MAX_REQUESTS=2048 \
-MIN_TURN_INDEX=4 \
-MAX_TURN_INDEX=9999 \
-CHAT_CONCURRENCY=512 \
-CHAT_MAX_COMPLETION_TOKENS=512 \
-CHAT_FORCE_IGNORE_EOS=0 \
-CHAT_ALLOWED_TOKEN_IDS= \
-VLLM_DEBUG_PADDED_INPUT_IDS=0 \
-sbatch repro_nemotron_nano_swe_rollout_prefix_server.sbatch
+TARGET_WIDTH=191 \
+MAX_CANDIDATES=8192 \
+TOKEN_CONCURRENCY=191 \
+TOKEN_MAX_TOKENS=512 \
+VLLM_REPRO_SHAPE_TRACE_LIMIT=30000 \
+sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
 ```
 
 ## Results
@@ -173,3 +175,50 @@ sbatch repro_nemotron_nano_swe_rollout_prefix_server.sbatch
   negative control: saved real rollout prefixes plus high server concurrency are
   still not sufficient to reproduce the hosted-training NaN outside the original
   training/server state.
+- `19378`: same rollout-prefix replay as `19374`, but with the shape trace
+  instrumentation enabled in the scheduler and GPU model runner. Result was
+  still `status_counts={'ok': 2048}` and `RESULT no_nonfinite_observed`.
+  Shape comparison against the failing training trace showed this replay did hit
+  the padded-only `162 -> 168` FULL one-token decode shape once, but it did not
+  hit the `191 -> 192` FULL shape where the training trace had real-row
+  non-finite outputs. This ruled out the simpler "any padded FULL decode row is
+  enough" explanation.
+- `19380`: token-ID `/v1/completions` replay against the same saved rollout
+  corpus. It selected 191 real rollout prefixes closest to the prompt-length
+  distribution in
+  `/beegfs/daniel/nemotron-nano-swe-collector-20260521-235954/vllm_nan_trace/cudagraph_replay_nonfinite.1236436.jsonl`,
+  then sent all 191 requests concurrently with `ignore_eos=true`,
+  `logprobs=1`, `max_tokens=512`, `FULL_AND_PIECEWISE`, `VLLM_USE_DEEP_GEMM=0`,
+  and `max_model_len=131072`. Result was
+  `TOKEN_BATCH_SUMMARY elapsed_seconds=23.22 status_counts={'ok': 191}` and
+  `TOKEN_BATCH_RESULT no_nonfinite_observed`.
+
+  The shape trace confirmed the intended target was exercised:
+
+  ```text
+  rows=746
+  modes={'FULL': 511, 'NONE': 235}
+  top shape: 277 x (191 actual tokens, 192 padded tokens, 191 reqs,
+                    max scheduled tokens 1, FULL)
+  also hit: 2 x 162 -> 168 FULL, 5 x 150 -> 152 FULL
+  ```
+
+  This is now the strongest negative control: real rollout-derived prompt token
+  IDs, exact `191 -> 192` FULL decode shape, one padded row, and the same broad
+  prompt-length distribution are still not sufficient on a fresh standalone vLLM
+  server.
+
+## Current interpretation
+
+- The previously suspected padded-width shape is real and easy to hit in a
+  vLLM-only server process.
+- Shape alone is not sufficient. `19380` hit the exact `191 -> 192` FULL decode
+  shape hundreds of times and stayed finite.
+- A useful next standalone direction is to reproduce more of the training
+  temporal state, not just a single concurrent decode width. In the failing
+  training trace, the padded-only `162 -> 168` FULL record appears adjacent to
+  the real-row `191 -> 192` FULL non-finite record. The standalone token replay
+  hit these shapes in the opposite natural order and stayed finite. A tighter
+  next repro should try to drive the same shape sequence and live-request
+  churn: first a `162 -> 168` FULL decode wave, then a `191 -> 192` FULL decode
+  wave, while keeping long prompts resident across both waves.
