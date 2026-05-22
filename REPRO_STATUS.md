@@ -246,6 +246,42 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   This rules out the simple "fresh server plus LoRA-enabled Nemotron MoE path
   plus real tokenized rollout churn" hypothesis on the current vLLM main-based
   repro branch.
+- `19392`: runtime LoRA replay using the actual adapter emitted by the training
+  repro:
+  `/beegfs/daniel/nemotron-nano-swe-step7-default-128k/run_default/broadcasts/step_1`.
+  The client loaded the adapter once through `/v1/load_lora_adapter`, then sent
+  2048 real rollout-prefix token requests at concurrency 512 using the adapter
+  model alias `nemotron-step1-lora`. Result was
+  `TOKEN_BATCH_SUMMARY elapsed_seconds=226.49 status_counts={'ok': 2048}` and
+  `TOKEN_BATCH_RESULT no_nonfinite_observed`. This run exercised the real LoRA
+  adapter path, but did not hit the exact `191 -> 192` target shape; observed
+  LoRA FULL shapes included `226 -> 232`, `157 -> 160`, and many `512 -> 512`
+  batches.
+- `19393`: controlled runtime LoRA replay using the same actual adapter, but
+  restricted to 191 selected real rollout-prefix token requests at concurrency
+  191 to force the suspicious target width. The adapter loaded once through
+  `/v1/load_lora_adapter`. Result was
+  `TOKEN_BATCH_SUMMARY elapsed_seconds=39.38 status_counts={'ok': 191}` and
+  `TOKEN_BATCH_RESULT no_nonfinite_observed`. The shape trace confirmed the
+  target was exercised:
+
+  ```text
+  280 x 191 actual tokens, 192 padded tokens, 191 requests,
+        max scheduled tokens 1, FULL, has_lora=true
+  ```
+
+  This is the strongest current vLLM-main negative control: fresh standalone
+  vLLM server, actual Nemotron Nano adapter, real rollout-derived token IDs,
+  exact `191 -> 192` FULL decode shape, and LoRA active in the batch descriptor
+  are still not sufficient to reproduce the JSON NaN.
+- `19394`: running as a stateful runtime-LoRA variant of `19393`. It loads the
+  same adapter four times under the same adapter name before replaying the same
+  191 target-width requests. This is meant to approximate repeated adapter
+  reload state without involving prime-rl. Early status: the server registered
+  both the base model and `nemotron-step1-lora`, accepted all four load cycles,
+  and is actively prefilling the 191 long requests. No NaN, HTTP 400, or worker
+  error has appeared yet; the run has not reached the target FULL decode shape
+  at the time of this update.
 
 ## Current interpretation
 
@@ -257,6 +293,8 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   tokenized rollout-prefix requests at concurrency 512 and stayed finite.
 - Enabling the deployment's LoRA server mode is not sufficient on current vLLM
   main. `19387` reached the fused MoE LoRA implementation and stayed finite.
+- Loading and using the actual adapter once is not sufficient. `19393` reached
+  the exact `191 -> 192` FULL LoRA decode shape 280 times and stayed finite.
 - The remaining high-signal differences from the failing training deployment are
   version and stateful runtime path:
     - failing deployment logs show vLLM `0.20.2`, while this standalone branch is
