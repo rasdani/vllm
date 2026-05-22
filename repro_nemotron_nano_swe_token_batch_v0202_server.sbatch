@@ -89,6 +89,10 @@ TOKEN_TEMPERATURE="${TOKEN_TEMPERATURE:-1.0}"
 LORA_NAME="${LORA_NAME:-nemotron-step1-lora}"
 LORA_PATH="${LORA_PATH:-/beegfs/daniel/nemotron-nano-swe-step7-default-128k/run_default/broadcasts/step_1}"
 LORA_LOAD_INPLACE_CYCLES="${LORA_LOAD_INPLACE_CYCLES:-1}"
+TP_SIZE="${TP_SIZE:-8}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-131072}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-1024}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 
 OUT_DIR="/beegfs/outputs/vllm0202-nemotron-nano-token-batch-${SLURM_JOB_ID}"
 mkdir -p "$OUT_DIR"
@@ -126,6 +130,10 @@ trap cleanup EXIT
     echo "lora_name=$LORA_NAME"
     echo "lora_path=$LORA_PATH"
     echo "lora_load_inplace_cycles=$LORA_LOAD_INPLACE_CYCLES"
+    echo "tp_size=$TP_SIZE"
+    echo "max_model_len=$MAX_MODEL_LEN"
+    echo "max_num_seqs=$MAX_NUM_SEQS"
+    echo "gpu_memory_utilization=$GPU_MEMORY_UTILIZATION"
     echo "cudagraph_mode=$CUDAGRAPH_MODE"
     echo "hf_home=$HF_HOME"
     echo "hf_hub_cache=$HF_HUB_CACHE"
@@ -150,11 +158,11 @@ PY
     --port "$PORT" \
     --model "$MODEL" \
     --served-model-name "$MODEL" \
-    --tensor-parallel-size 8 \
+    --tensor-parallel-size "$TP_SIZE" \
     --dtype bfloat16 \
-    --max-model-len 131072 \
-    --max-num-seqs 1024 \
-    --gpu-memory-utilization 0.90 \
+    --max-model-len "$MAX_MODEL_LEN" \
+    --max-num-seqs "$MAX_NUM_SEQS" \
+    --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
     --logprobs-mode processed_logprobs \
     --enable-chunked-prefill \
     --no-enable-prefix-caching \
