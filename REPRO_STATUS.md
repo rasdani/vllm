@@ -274,14 +274,25 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   vLLM server, actual Nemotron Nano adapter, real rollout-derived token IDs,
   exact `191 -> 192` FULL decode shape, and LoRA active in the batch descriptor
   are still not sufficient to reproduce the JSON NaN.
-- `19394`: running as a stateful runtime-LoRA variant of `19393`. It loads the
-  same adapter four times under the same adapter name before replaying the same
-  191 target-width requests. This is meant to approximate repeated adapter
-  reload state without involving prime-rl. Early status: the server registered
-  both the base model and `nemotron-step1-lora`, accepted all four load cycles,
-  and is actively prefilling the 191 long requests. No NaN, HTTP 400, or worker
-  error has appeared yet; the run has not reached the target FULL decode shape
-  at the time of this update.
+- `19394`: stateful runtime-LoRA variant of `19393`. It loaded the same adapter
+  four times under the same adapter name before replaying the same 191
+  target-width requests. This approximates repeated adapter reload state without
+  involving prime-rl. The server registered both the base model and
+  `nemotron-step1-lora`, accepted all four load cycles, and eventually reached
+  the exact target shape:
+
+  ```text
+  14 x 191 actual tokens, 192 padded tokens, 191 requests,
+       max scheduled tokens 1, FULL, has_lora=true
+  ```
+
+  There was no NaN, HTTP 400, or worker-side non-finite error. The run is still
+  not a clean negative control because all 191 client requests hit the 1800s
+  `httpx.ReadTimeout`, so the script reported
+  `TOKEN_BATCH_SUMMARY elapsed_seconds=1800.25 status_counts={'exception': 191}`
+  and `TOKEN_BATCH_RESULT inconclusive`. The important new signal is that
+  repeated same-name runtime adapter loads caused a large throughput collapse
+  compared with `19393` while still not surfacing the target JSON NaN.
 
 ## Current interpretation
 
@@ -295,6 +306,10 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   main. `19387` reached the fused MoE LoRA implementation and stayed finite.
 - Loading and using the actual adapter once is not sufficient. `19393` reached
   the exact `191 -> 192` FULL LoRA decode shape 280 times and stayed finite.
+- Re-loading the same actual adapter several times is still not sufficient to
+  surface the target NaN on current vLLM main. `19394` reached the exact shape
+  only 14 times before all client requests timed out, so treat it as an
+  inconclusive performance-path signal, not as proof of correctness.
 - The remaining high-signal differences from the failing training deployment are
   version and stateful runtime path:
     - failing deployment logs show vLLM `0.20.2`, while this standalone branch is
