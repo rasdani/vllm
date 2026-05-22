@@ -352,6 +352,31 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   current vLLM main: real GPT-OSS adapter sequence, real prompt tokens, 128-way
   decode load, and 98,304 generated tokens with logprobs did not reproduce the
   hosted NaN.
+- `19413`: exact-vLLM-0.20.2 rerun of the GPT-OSS token-ID completions replay,
+  using the same client script and real adapter/prompt data as `19404`, but
+  launching the server from `/home/daniel/git/vllm-nemotron-v0202-repro` with
+  `vllm=0.20.2`. Command wrapper:
+  `repro_gptoss20b_lora_sequence_v0202_server.sbatch`. Result:
+  `GPTOSS_SUMMARY elapsed_seconds=986.40 status_counts={'ok': 512}` and
+  `GPTOSS_RESULT no_nonfinite_observed`. This is a clean negative control for
+  exact vLLM `0.20.2`: real GPT-OSS adapter sequence, real prompt tokens,
+  128-way decode load, and 98,304 generated tokens with logprobs still did not
+  reproduce the hosted NaN on a fresh standalone server.
+
+  The important version-specific signal is adapter-loading behavior. Current
+  vLLM main emitted zero `supported LoRA target modules` warnings in `19404`;
+  vLLM `0.20.2` emitted 72 warnings like:
+
+  ```text
+  LoRA module 'model.layers.N.mlp.experts.base_layer' ... is not in the model's
+  supported LoRA target modules [experts, k_proj, o_proj, q_proj, router,
+  v_proj]. These parameters will be ignored, which may cause abnormal model
+  behavior.
+  ```
+
+  That does not reproduce the JSON NaN by itself, but it is strong evidence of
+  GPT-OSS LoRA support skew between the hosted-era vLLM version and current
+  main.
 
 ## Current interpretation
 
@@ -378,7 +403,12 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
     - the real training server may have seen weight update / reload state before
       the first NaN, while all standalone runs above use a fresh static model.
 - The GPT-OSS LoRA-only standalone evidence currently points the same way: real
-  adapter files and real prompt data are not sufficient on a fresh vLLM main
-  server. The missing ingredient is likely hosted/training state, vLLM version
-  skew, or a reload/update path that is not reproduced by plain
-  `/v1/load_lora_adapter` with static saved adapters.
+  adapter files and real prompt data are not sufficient on either a fresh vLLM
+  main server (`19404`) or a fresh exact-vLLM-0.20.2 server (`19413`). The
+  missing ingredient is likely hosted/training state or a reload/update path
+  that is not reproduced by plain `/v1/load_lora_adapter` with static saved
+  adapters.
+- Exact vLLM `0.20.2` does show GPT-OSS LoRA support skew: the runtime ignores
+  `mlp.experts.base_layer` adapter tensors, while current main does not emit
+  those warnings. This is suspicious for hosted GPT-OSS quality/correctness, but
+  not enough to explain the observed JSON NaN without additional state.
