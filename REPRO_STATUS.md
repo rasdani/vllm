@@ -390,14 +390,18 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   That does not reproduce the JSON NaN by itself, but it is strong evidence of
   GPT-OSS LoRA support skew between the hosted-era vLLM version and current
   main.
-- `19420`: pending exact-vLLM-0.20.2 Nemotron Nano server replay. This is the
-  current focused attempt: one standalone vLLM OpenAI server, TP configurable
-  and currently submitted with `TP_SIZE=1`, real rollout-derived token IDs,
+- `19826`: exact-vLLM-0.20.2 Nemotron Nano server replay. This was one
+  standalone vLLM OpenAI server on `ltc-idc3-hgx8-h200-55`, `TP_SIZE=1`,
+  `max_model_len=131072`, `max_num_seqs=256`, real rollout-derived token IDs,
   target width `191`, and the actual saved adapter
   `/beegfs/daniel/nemotron-nano-swe-step7-default-128k/run_default/broadcasts/step_1`.
   It is intentionally not using prime-rl, verifiers, Prime sandboxes, or Prime
-  tunnels. As of submission, the job is pending on SLURM priority and has not
-  produced logs yet.
+  tunnels. The server loaded successfully on one H200, enabled the fused MoE
+  LoRA implementation, captured `FULL_AND_PIECEWISE` CUDA graphs, loaded the
+  real adapter through `/v1/load_lora_adapter`, and reached 191 concurrent
+  running requests. Result:
+  `TOKEN_BATCH_SUMMARY elapsed_seconds=114.34 status_counts={'ok': 191}` and
+  `TOKEN_BATCH_RESULT no_nonfinite_observed`.
 - CPU-side fixture validation for the exact-v0.20.2 Nano replay passed before
   GPU allocation. The replay client rebuilt `191` token prompts from `512` saved
   rollouts and matched all `191` target trace rows. Prompt lengths ranged from
