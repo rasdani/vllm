@@ -3,9 +3,10 @@
 #SBATCH --job-name=vllm0202-nano-token
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=512G
 #SBATCH --gres=gpu:8
 #SBATCH --partition=cluster
-#SBATCH --exclusive
 #SBATCH --output=/beegfs/outputs/vllm0202-nemotron-nano-token-batch-%j.log
 #SBATCH --error=/beegfs/outputs/vllm0202-nemotron-nano-token-batch-%j.log
 
