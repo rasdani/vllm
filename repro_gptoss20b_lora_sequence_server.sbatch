@@ -81,6 +81,8 @@ MAX_TURN_INDEX="${MAX_TURN_INDEX:-9999}"
 CHAT_CONCURRENCY="${CHAT_CONCURRENCY:-128}"
 MAX_COMPLETION_TOKENS="${MAX_COMPLETION_TOKENS:-192}"
 IGNORE_EOS="${IGNORE_EOS:-0}"
+REPLAY_ENDPOINT="${REPLAY_ENDPOINT:-chat}"
+REPEAT_TO="${REPEAT_TO:-0}"
 TP_SIZE="${TP_SIZE:-1}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-256}"
@@ -119,6 +121,8 @@ trap cleanup EXIT
     echo "chat_concurrency=$CHAT_CONCURRENCY"
     echo "max_completion_tokens=$MAX_COMPLETION_TOKENS"
     echo "ignore_eos=$IGNORE_EOS"
+    echo "replay_endpoint=$REPLAY_ENDPOINT"
+    echo "repeat_to=$REPEAT_TO"
     echo "tp_size=$TP_SIZE"
     echo "max_model_len=$MAX_MODEL_LEN"
     echo "max_num_seqs=$MAX_NUM_SEQS"
@@ -209,5 +213,7 @@ fi
     --max-turn-index "$MAX_TURN_INDEX" \
     --concurrency "$CHAT_CONCURRENCY" \
     --max-completion-tokens "$MAX_COMPLETION_TOKENS" \
+    --endpoint "$REPLAY_ENDPOINT" \
+    --repeat-to "$REPEAT_TO" \
     "${client_args[@]}" \
     2>&1 | tee "$CLIENT_LOG"

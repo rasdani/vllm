@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from transformers import AutoTokenizer
 
 MODEL = "unsloth/gpt-oss-20b-BF16"
 LORA_NAME = "openai/gpt-oss-20b"
@@ -76,8 +77,41 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-completion-tokens", type=int, default=192)
     parser.add_argument("--timeout-s", type=float, default=1800.0)
     parser.add_argument("--ignore-eos", action="store_true")
+    parser.add_argument(
+        "--endpoint",
+        choices=("chat", "completions"),
+        default="chat",
+        help="Use chat/completions, or render chat locally and hit completions.",
+    )
+    parser.add_argument(
+        "--repeat-to",
+        type=int,
+        default=0,
+        help="Repeat selected records until this many requests are queued.",
+    )
     parser.add_argument("--stop-on-nonfinite", action="store_true")
     return parser.parse_args()
+
+
+def fill_missing_descriptions(schema: Any) -> None:
+    if not isinstance(schema, dict):
+        return
+    if (
+        "description" not in schema
+        and {"type", "anyOf", "oneOf", "allOf", "properties"} & schema.keys()
+    ):
+        schema["description"] = ""
+    for key in ("properties",):
+        values = schema.get(key)
+        if isinstance(values, dict):
+            for value in values.values():
+                fill_missing_descriptions(value)
+    for key in ("anyOf", "oneOf", "allOf"):
+        values = schema.get(key)
+        if isinstance(values, list):
+            for value in values:
+                fill_missing_descriptions(value)
+    fill_missing_descriptions(schema.get("items"))
 
 
 def normalize_tool(tool: dict[str, Any]) -> dict[str, Any]:
@@ -88,6 +122,7 @@ def normalize_tool(tool: dict[str, Any]) -> dict[str, Any]:
     function = normalized["function"]
     if function.get("strict") is None:
         function.pop("strict", None)
+    fill_missing_descriptions(function.get("parameters"))
     return normalized
 
 
@@ -186,6 +221,15 @@ def collect_records(args: argparse.Namespace) -> list[ReplayRecord]:
     return records
 
 
+def repeat_records(records: list[ReplayRecord], repeat_to: int) -> list[ReplayRecord]:
+    if repeat_to <= len(records):
+        return records
+    repeated: list[ReplayRecord] = []
+    while len(repeated) < repeat_to:
+        repeated.extend(records[: repeat_to - len(repeated)])
+    return repeated
+
+
 def nonfinite_paths(value: Any, path: str = "$") -> list[tuple[str, float]]:
     if isinstance(value, float):
         return [] if math.isfinite(value) else [(path, value)]
@@ -202,7 +246,34 @@ def nonfinite_paths(value: Any, path: str = "$") -> list[tuple[str, float]]:
     return []
 
 
-def make_body(record: ReplayRecord, args: argparse.Namespace) -> dict[str, Any]:
+def prompt_token_ids(
+    tokenizer: Any,
+    record: ReplayRecord,
+) -> list[int]:
+    extra_body = dict(record.sampling_args.get("extra_body") or {})
+    rendered = tokenizer.apply_chat_template(
+        record.messages,
+        tools=record.tools,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        **extra_body.get("chat_template_kwargs", {"enable_thinking": False}),
+    )
+    input_ids = (
+        rendered["input_ids"]
+        if hasattr(rendered, "keys") and "input_ids" in rendered
+        else rendered
+    )
+    if input_ids and isinstance(input_ids[0], list):
+        input_ids = input_ids[0]
+    return list(input_ids)
+
+
+def make_chat_body(
+    record: ReplayRecord,
+    args: argparse.Namespace,
+    request_index: int,
+) -> dict[str, Any]:
     sampling_args = record.sampling_args
     extra_body = dict(sampling_args.get("extra_body") or {})
     body: dict[str, Any] = {
@@ -223,7 +294,8 @@ def make_body(record: ReplayRecord, args: argparse.Namespace) -> dict[str, Any]:
         ),
         "cache_salt": extra_body.get("cache_salt", "1"),
         "request_id": (
-            f"gptoss-rollout-{record.rollout_index}-turn-{record.turn_index}"
+            f"gptoss-{request_index}-rollout-{record.rollout_index}"
+            f"-turn-{record.turn_index}"
         ),
     }
     if args.ignore_eos:
@@ -231,7 +303,32 @@ def make_body(record: ReplayRecord, args: argparse.Namespace) -> dict[str, Any]:
     return body
 
 
-def response_summary(response_json: dict[str, Any]) -> str:
+def make_completion_body(
+    tokenizer: Any,
+    record: ReplayRecord,
+    args: argparse.Namespace,
+    request_index: int,
+) -> dict[str, Any]:
+    sampling_args = record.sampling_args
+    body: dict[str, Any] = {
+        "model": args.lora_name,
+        "prompt": prompt_token_ids(tokenizer, record),
+        "stream": False,
+        "echo": False,
+        "logprobs": 1 if sampling_args.get("logprobs", True) else None,
+        "temperature": sampling_args.get("temperature", 1.0),
+        "top_p": sampling_args.get("top_p", 1.0),
+        "max_tokens": args.max_completion_tokens,
+        "ignore_eos": args.ignore_eos,
+        "request_id": (
+            f"gptoss-token-{request_index}-rollout-{record.rollout_index}"
+            f"-turn-{record.turn_index}"
+        ),
+    }
+    return body
+
+
+def chat_response_summary(response_json: dict[str, Any]) -> str:
     choices = response_json.get("choices") or []
     if not choices:
         return "choices=0"
@@ -249,6 +346,20 @@ def response_summary(response_json: dict[str, Any]) -> str:
         f"finish={choice.get('finish_reason')} content_chars={len(content)} "
         f"tool_calls={len(tool_calls)} logprob_items={len(content_logprobs)} "
         f"zero_token_ids={sum(1 for token_id in token_ids if token_id == 0)}"
+    )
+
+
+def completion_response_summary(response_json: dict[str, Any]) -> str:
+    choices = response_json.get("choices") or []
+    if not choices:
+        return "choices=0"
+    choice = choices[0]
+    text = choice.get("text") or ""
+    logprobs = choice.get("logprobs") or {}
+    token_logprobs = logprobs.get("token_logprobs") or []
+    return (
+        f"finish={choice.get('finish_reason')} text_chars={len(text)} "
+        f"logprob_items={len(token_logprobs)}"
     )
 
 
@@ -285,9 +396,13 @@ async def post_chat(
     semaphore: asyncio.Semaphore,
     body: dict[str, Any],
     record: ReplayRecord,
+    request_index: int,
 ) -> str:
     started = time.monotonic()
-    tag = f"rollout-{record.rollout_index}-turn-{record.turn_index}"
+    tag = (
+        f"request-{request_index}-rollout-{record.rollout_index}"
+        f"-turn-{record.turn_index}"
+    )
     body_len = len(json.dumps(body, separators=(",", ":")))
     async with semaphore:
         try:
@@ -339,7 +454,7 @@ async def post_chat(
             "GPTOSS_REQUEST_NONFINITE "
             f"tag={tag} example_id={record.example_id} body_len={body_len} "
             f"elapsed_seconds={elapsed:.2f} paths={bad_paths[:16]} "
-            f"{response_summary(response_json)}",
+            f"{chat_response_summary(response_json)}",
             flush=True,
         )
         return "nonfinite"
@@ -347,7 +462,85 @@ async def post_chat(
     print(
         "GPTOSS_REQUEST_OK "
         f"tag={tag} example_id={record.example_id} body_len={body_len} "
-        f"elapsed_seconds={elapsed:.2f} {response_summary(response_json)}",
+        f"elapsed_seconds={elapsed:.2f} {chat_response_summary(response_json)}",
+        flush=True,
+    )
+    return "ok"
+
+
+async def post_completion(
+    client: httpx.AsyncClient,
+    semaphore: asyncio.Semaphore,
+    body: dict[str, Any],
+    record: ReplayRecord,
+    request_index: int,
+) -> str:
+    started = time.monotonic()
+    tag = (
+        f"token-request-{request_index}-rollout-{record.rollout_index}"
+        f"-turn-{record.turn_index}"
+    )
+    prompt_len = len(body["prompt"])
+    async with semaphore:
+        try:
+            response = await client.post(
+                "/completions",
+                json=body,
+                headers={"X-Request-Id": tag},
+            )
+        except Exception as exc:
+            print(
+                "GPTOSS_TOKEN_EXCEPTION "
+                f"tag={tag} example_id={record.example_id} prompt_len={prompt_len} "
+                f"elapsed_seconds={time.monotonic() - started:.2f} "
+                f"exc={type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return "exception"
+
+    elapsed = time.monotonic() - started
+    if response.status_code >= 400:
+        text = response.text[:1600]
+        status = "nonfinite" if "nan" in text.lower() else "http_error"
+        print(
+            "GPTOSS_TOKEN_HTTP_ERROR "
+            f"tag={tag} example_id={record.example_id} prompt_len={prompt_len} "
+            f"status={response.status_code} elapsed_seconds={elapsed:.2f} "
+            f"text={text!r}",
+            flush=True,
+        )
+        return status
+
+    try:
+        response_json = json.loads(response.text)
+    except Exception as exc:
+        text = response.text[:1600]
+        status = "nonfinite" if "nan" in text.lower() else "json_error"
+        print(
+            "GPTOSS_TOKEN_JSON_ERROR "
+            f"tag={tag} example_id={record.example_id} prompt_len={prompt_len} "
+            f"elapsed_seconds={elapsed:.2f} exc={type(exc).__name__}: {exc} "
+            f"text={text!r}",
+            flush=True,
+        )
+        return status
+
+    bad_paths = nonfinite_paths(response_json)
+    if bad_paths:
+        print(
+            "GPTOSS_TOKEN_NONFINITE "
+            f"tag={tag} example_id={record.example_id} prompt_len={prompt_len} "
+            f"elapsed_seconds={elapsed:.2f} paths={bad_paths[:16]} "
+            f"{completion_response_summary(response_json)}",
+            flush=True,
+        )
+        return "nonfinite"
+
+    print(
+        "GPTOSS_TOKEN_OK "
+        f"tag={tag} example_id={record.example_id} prompt_len={prompt_len} "
+        f"elapsed_seconds={elapsed:.2f} "
+        f"{completion_response_summary(response_json)}",
         flush=True,
     )
     return "ok"
@@ -355,13 +548,13 @@ async def post_chat(
 
 async def main_async() -> int:
     args = parse_args()
-    records = collect_records(args)
+    records = repeat_records(collect_records(args), args.repeat_to)
     print(
         "GPTOSS_REPLAY_START "
         f"model={args.model} lora_name={args.lora_name} records={len(records)} "
         f"concurrency={args.concurrency} "
         f"max_completion_tokens={args.max_completion_tokens} "
-        f"ignore_eos={args.ignore_eos}",
+        f"ignore_eos={args.ignore_eos} endpoint={args.endpoint}",
         flush=True,
     )
     for index, record in enumerate(records[:8]):
@@ -386,10 +579,17 @@ async def main_async() -> int:
         trust_env=False,
     ) as client:
         await load_lora_sequence(client, args)
-        tasks = [
-            post_chat(client, semaphore, make_body(record, args), record)
-            for record in records
-        ]
+        tokenizer = AutoTokenizer.from_pretrained(args.model)
+        tasks = []
+        for request_index, record in enumerate(records):
+            if args.endpoint == "chat":
+                body = make_chat_body(record, args, request_index)
+                tasks.append(post_chat(client, semaphore, body, record, request_index))
+            else:
+                body = make_completion_body(tokenizer, record, args, request_index)
+                tasks.append(
+                    post_completion(client, semaphore, body, record, request_index)
+                )
 
         counts: dict[str, int] = {}
         started = time.monotonic()
