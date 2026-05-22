@@ -72,6 +72,19 @@ evidence, not the primary standalone fixture.
       `/v1/completions`.
     - This avoids chat tool-parser early exits and deliberately holds the
       suspicious `191 -> 192` one-token FULL CUDA graph decode shape.
+- `repro_nemotron_nano_swe_token_batch_v0202_server.sbatch`
+    - Exact-version server wrapper that launches vLLM from
+      `/home/daniel/git/vllm-nemotron-v0202-repro` (`vllm=0.20.2`) while using
+      the replay client from this branch.
+    - Default target is the real Nano SWE rollout token batch plus the real
+      saved step-1 adapter through `/v1/load_lora_adapter`.
+- `repro_nemotron_nano_swe_token_batch_offline.py`
+    - Single-process `LLM.generate()` replay over the same real token batch and
+      real adapter.
+    - No OpenAI server, no prime-rl, no sandboxes. This is the cleanest
+      maintainer-facing artifact if it reproduces.
+- `repro_nemotron_nano_swe_token_batch_v0202_offline.sbatch`
+    - SLURM wrapper for the offline exact-v0.20.2 replay.
 - `repro_gptoss20b_lora_sequence_server.py`
     - Replays real GPT-OSS LoRA rollout prefixes from
       `/beegfs/daniel/gptoss20b-ptft-lora-nan-20260514-013919/run_default`.
@@ -377,6 +390,14 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   That does not reproduce the JSON NaN by itself, but it is strong evidence of
   GPT-OSS LoRA support skew between the hosted-era vLLM version and current
   main.
+- `19420`: pending exact-vLLM-0.20.2 Nemotron Nano server replay. This is the
+  current focused attempt: one standalone vLLM OpenAI server, TP configurable
+  and currently submitted with `TP_SIZE=1`, real rollout-derived token IDs,
+  target width `191`, and the actual saved adapter
+  `/beegfs/daniel/nemotron-nano-swe-step7-default-128k/run_default/broadcasts/step_1`.
+  It is intentionally not using prime-rl, verifiers, Prime sandboxes, or Prime
+  tunnels. As of submission, the job is pending on SLURM priority and has not
+  produced logs yet.
 
 ## Current interpretation
 
