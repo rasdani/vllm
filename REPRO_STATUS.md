@@ -72,6 +72,15 @@ evidence, not the primary standalone fixture.
       `/v1/completions`.
     - This avoids chat tool-parser early exits and deliberately holds the
       suspicious `191 -> 192` one-token FULL CUDA graph decode shape.
+- `repro_gptoss20b_lora_sequence_server.py`
+    - Replays real GPT-OSS LoRA rollout prefixes from
+      `/beegfs/daniel/gptoss20b-ptft-lora-nan-20260514-013919/run_default`.
+    - Loads the real adapter sequence `broadcasts/step_1 -> step_2 -> step_3`
+      through `/v1/load_lora_adapter` under the hosted LoRA alias
+      `openai/gpt-oss-20b`.
+    - Supports both `/v1/chat/completions` and locally rendered token-ID
+      `/v1/completions` replay. The token-ID mode avoids GPT-OSS harmony/tool
+      parser failures and isolates model/logprob response finiteness.
 
 ## Latest command
 
@@ -293,6 +302,56 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   and `TOKEN_BATCH_RESULT inconclusive`. The important new signal is that
   repeated same-name runtime adapter loads caused a large throughput collapse
   compared with `19393` while still not surfacing the target JSON NaN.
+- `19403`: first GPT-OSS LoRA sequence replay on current vLLM main. Server:
+  `unsloth/gpt-oss-20b-BF16`, TP=1, `bfloat16`, `max_model_len=65536`,
+  `FULL_AND_PIECEWISE`, `--enable-lora`, `--enable-auto-tool-choice`,
+  `--tool-call-parser openai`, `--reasoning-parser openai_gptoss`,
+  `VLLM_USE_DEEP_GEMM=0`, HF cache under `/beegfs/huggingface`.
+  Client loaded real adapters:
+
+  ```text
+  /beegfs/daniel/gptoss20b-ptft-lora-nan-20260514-013919/run_default/broadcasts/step_1
+  /beegfs/daniel/gptoss20b-ptft-lora-nan-20260514-013919/run_default/broadcasts/step_2
+  /beegfs/daniel/gptoss20b-ptft-lora-nan-20260514-013919/run_default/broadcasts/step_3
+  ```
+
+  Then replayed real `rollouts/step_3/train_rollouts.jsonl` prefixes through
+  `/v1/chat/completions`. The saved step file only contained 8 rollouts with two
+  assistant turns each, so this first chat replay issued 16 requests despite
+  `CHAT_CONCURRENCY=128`. Result:
+  `GPTOSS_SUMMARY elapsed_seconds=253.74 status_counts={'ok': 12, 'http_error': 4}`
+  and `GPTOSS_RESULT inconclusive`. The four HTTP errors were all GPT-OSS
+  harmony/parser errors:
+
+  ```text
+  Unexpected token 12606 while expecting start token 200006
+  ```
+
+  There was no NaN JSON error and no non-finite response value. This run showed
+  that raw chat replay introduces a separate parser failure mode, so the next
+  attempt switched to token-ID `/v1/completions`.
+- `19404`: GPT-OSS LoRA sequence replay in token-ID completions mode. Same
+  server/model/adapter sequence as `19403`, but the client rendered real GPT-OSS
+  chat prefixes locally with the HF chat template and sent the prompt token IDs
+  to `/v1/completions`. Command shape:
+
+  ```bash
+  REPLAY_ENDPOINT=completions \
+  IGNORE_EOS=1 \
+  REPEAT_TO=512 \
+  CHAT_CONCURRENCY=128 \
+  MAX_REQUESTS=512 \
+  MAX_ROLLOUTS=512 \
+  sbatch repro_gptoss20b_lora_sequence_server.sbatch
+  ```
+
+  The 16 real prefixes from step 3 were repeated to 512 requests, each forced to
+  generate 192 tokens with `logprobs=1`. Result:
+  `GPTOSS_SUMMARY elapsed_seconds=1138.63 status_counts={'ok': 512}` and
+  `GPTOSS_RESULT no_nonfinite_observed`. This is a clean negative control for
+  current vLLM main: real GPT-OSS adapter sequence, real prompt tokens, 128-way
+  decode load, and 98,304 generated tokens with logprobs did not reproduce the
+  hosted NaN.
 
 ## Current interpretation
 
@@ -318,3 +377,8 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
       extension;
     - the real training server may have seen weight update / reload state before
       the first NaN, while all standalone runs above use a fresh static model.
+- The GPT-OSS LoRA-only standalone evidence currently points the same way: real
+  adapter files and real prompt data are not sufficient on a fresh vLLM main
+  server. The missing ingredient is likely hosted/training state, vLLM version
+  skew, or a reload/update path that is not reproduced by plain
+  `/v1/load_lora_adapter` with static saved adapters.
