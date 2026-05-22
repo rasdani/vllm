@@ -398,6 +398,13 @@ sbatch repro_nemotron_nano_swe_token_batch_server.sbatch
   It is intentionally not using prime-rl, verifiers, Prime sandboxes, or Prime
   tunnels. As of submission, the job is pending on SLURM priority and has not
   produced logs yet.
+- CPU-side fixture validation for the exact-v0.20.2 Nano replay passed before
+  GPU allocation. The replay client rebuilt `191` token prompts from `512` saved
+  rollouts and matched all `191` target trace rows. Prompt lengths ranged from
+  `1,557` to `59,966` tokens, with `target_delta_max=906`, and the real adapter
+  file exists at the expected path. This reduces the pending GPU job's risk to
+  runtime/model behavior rather than bad saved data, missing tools, or chat
+  template construction.
 
 ## Current interpretation
 
